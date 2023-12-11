@@ -7,6 +7,8 @@
 
 package com.google.protobuf;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.logging.Logger;
 
 /**
@@ -15,6 +17,8 @@ import java.util.logging.Logger;
  * by related unit tests and Protobuf Java gencode, and should not be used elsewhere.
  */
 public final class RuntimeVersion {
+
+  private static final Logger logger = Logger.getLogger(RuntimeVersion.class.getName());
 
   /** Indicates the domain of the Protobuf artifact. */
   public enum RuntimeDomain {
@@ -124,5 +128,26 @@ public final class RuntimeVersion {
   /** Gets the version string given the version segments. */
   private static String versionString(int major, int minor, int patch, String suffix) {
     return String.format("%d.%d.%d%s", major, minor, patch, suffix);
+  }
+
+  private static int[] readVersionString() {
+    // CharStreams is unavailable with "android" constraints.
+    StringBuilder sb = new StringBuilder();
+    try {
+      InputStream inputStream =
+          RuntimeVersion.class.getResourceAsStream("/google/protobuf/compiler/version.txt");
+      for (int ch; (ch = inputStream.read()) != -1; ) {
+        sb.append((char) ch);
+      }
+    } catch (IOException e) {
+      logger.severe("Failed to read Protobuf version file: " + e.getMessage());
+    }
+    String[] versionComponents = sb.toString().replaceAll("\n", "").split("\\.");
+    int[] version = new int[versionComponents.length];
+    for (int i = 0; i < versionComponents.length; i++) {
+      version[i] = Integer.parseInt(versionComponents[i]);
+    }
+
+    return version;
   }
 }
