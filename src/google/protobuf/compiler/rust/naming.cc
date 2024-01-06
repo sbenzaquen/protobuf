@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "absl/log/absl_log.h"
+#include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_replace.h"
@@ -18,6 +19,7 @@
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "google/protobuf/compiler/code_generator.h"
+#include "google/protobuf/compiler/cpp/helpers.h"
 #include "google/protobuf/compiler/rust/context.h"
 #include "google/protobuf/descriptor.h"
 
@@ -119,6 +121,38 @@ std::string ThunkMapOrRepeated(Context& ctx, const FieldDescriptor& field,
   return thunkName;
 }
 
+std::string RustModule(Context& ctx, const FileDescriptor& file,
+                       const Descriptor* containing_type) {
+  std::vector<std::string> modules;
+
+  std::vector<std::string> package_modules =
+      absl::StrSplit(file.package(), '.', absl::SkipEmpty());
+
+  modules.insert(modules.begin(), package_modules.begin(),
+                 package_modules.end());
+
+  // Innermost to outermost order.
+  std::vector<std::string> modules_from_containing_types;
+  const Descriptor* parent = containing_type;
+  while (parent != nullptr) {
+    modules_from_containing_types.push_back(absl::StrCat(parent->name(), "_"));
+    parent = parent->containing_type();
+  }
+
+  // Add the modules from containing messages (rbegin/rend to get them in outer
+  // to inner order).
+  modules.insert(modules.end(), modules_from_containing_types.rbegin(),
+                 modules_from_containing_types.rend());
+
+  // If there is any modules at all, push an empty string on the end so that
+  // we get the trailing ::
+  if (!modules.empty()) {
+    modules.push_back("");
+  }
+
+  return absl::StrJoin(modules, "::");
+}
+
 }  // namespace
 
 std::string ThunkName(Context& ctx, const FieldDescriptor& field,
@@ -141,7 +175,7 @@ std::string ThunkName(Context& ctx, const Descriptor& msg,
                       op);
 }
 
-std::string PrimitiveRsTypeName(const FieldDescriptor& field) {
+std::string RsTypePath(Context& ctx, const FieldDescriptor& field) {
   switch (field.type()) {
     case FieldDescriptor::TYPE_BOOL:
       return "bool";
@@ -167,6 +201,12 @@ std::string PrimitiveRsTypeName(const FieldDescriptor& field) {
       return "[u8]";
     case FieldDescriptor::TYPE_STRING:
       return "::__pb::ProtoStr";
+    case FieldDescriptor::TYPE_MESSAGE:
+      return absl::StrCat(
+          "crate::", GetCrateRelativeQualifiedPath(ctx, *field.message_type()));
+    case FieldDescriptor::TYPE_ENUM:
+      return absl::StrCat(
+          "crate::", GetCrateRelativeQualifiedPath(ctx, *field.enum_type()));
     default:
       break;
   }
@@ -174,44 +214,12 @@ std::string PrimitiveRsTypeName(const FieldDescriptor& field) {
   return "";
 }
 
-// Constructs a string of the Rust modules which will contain the message.
-//
-// Example: Given a message 'NestedMessage' which is defined in package 'x.y'
-// which is inside 'ParentMessage', the message will be placed in the
-// x::y::ParentMessage_ Rust module, so this function will return the string
-// "x::y::ParentMessage_::".
-//
-// If the message has no package and no containing messages then this returns
-// empty string.
 std::string RustModule(Context& ctx, const Descriptor& msg) {
-  std::vector<std::string> modules;
+  return RustModule(ctx, *msg.file(), msg.containing_type());
+}
 
-  std::vector<std::string> package_modules =
-      absl::StrSplit(msg.file()->package(), '.', absl::SkipEmpty());
-
-  modules.insert(modules.begin(), package_modules.begin(),
-                 package_modules.end());
-
-  // Innermost to outermost order.
-  std::vector<std::string> modules_from_containing_types;
-  const Descriptor* parent = msg.containing_type();
-  while (parent != nullptr) {
-    modules_from_containing_types.push_back(absl::StrCat(parent->name(), "_"));
-    parent = parent->containing_type();
-  }
-
-  // Add the modules from containing messages (rbegin/rend to get them in outer
-  // to inner order).
-  modules.insert(modules.end(), modules_from_containing_types.rbegin(),
-                 modules_from_containing_types.rend());
-
-  // If there is any modules at all, push an empty string on the end so that
-  // we get the trailing ::
-  if (!modules.empty()) {
-    modules.push_back("");
-  }
-
-  return absl::StrJoin(modules, "::");
+std::string RustModule(Context& ctx, const EnumDescriptor& enum_) {
+  return RustModule(ctx, *enum_.file(), enum_.containing_type());
 }
 
 std::string RustInternalModuleName(Context& ctx, const FileDescriptor& file) {
@@ -221,6 +229,11 @@ std::string RustInternalModuleName(Context& ctx, const FileDescriptor& file) {
 
 std::string GetCrateRelativeQualifiedPath(Context& ctx, const Descriptor& msg) {
   return absl::StrCat(RustModule(ctx, msg), msg.name());
+}
+
+std::string GetCrateRelativeQualifiedPath(Context& ctx,
+                                          const EnumDescriptor& enum_) {
+  return absl::StrCat(RustModule(ctx, enum_), EnumRsName(enum_));
 }
 
 std::string FieldInfoComment(Context& ctx, const FieldDescriptor& field) {
@@ -236,6 +249,70 @@ std::string FieldInfoComment(Context& ctx, const FieldDescriptor& field) {
   }
 
   return comment;
+}
+
+std::string EnumRsName(const EnumDescriptor& desc) {
+  return SnakeToUpperCamelCase(desc.name());
+}
+
+std::string OneofViewEnumRsName(const OneofDescriptor& oneof) {
+  return SnakeToUpperCamelCase(oneof.name());
+}
+
+std::string OneofMutEnumRsName(const OneofDescriptor& oneof) {
+  return SnakeToUpperCamelCase(oneof.name()) + "Mut";
+}
+
+std::string OneofCaseEnumRsName(const OneofDescriptor& oneof) {
+  // Note: This is the name used for the cpp Case enum, we use it for both
+  // the Rust Case enum as well as for the cpp case enum in the cpp thunk.
+  return SnakeToUpperCamelCase(oneof.name()) + "Case";
+}
+
+std::string OneofCaseRsName(const FieldDescriptor& oneof_field) {
+  return SnakeToUpperCamelCase(oneof_field.name());
+}
+
+std::string CamelToSnakeCase(absl::string_view input) {
+  std::string result;
+  result.reserve(input.size() + 4);  // No reallocation for 4 _
+  bool is_first_character = true;
+  bool last_char_was_underscore = false;
+  for (const char c : input) {
+    if (!is_first_character && absl::ascii_isupper(c) &&
+        !last_char_was_underscore) {
+      result += '_';
+    }
+    last_char_was_underscore = c == '_';
+    result += absl::ascii_tolower(c);
+    is_first_character = false;
+  }
+  return result;
+}
+
+std::string SnakeToUpperCamelCase(absl::string_view input) {
+  return cpp::UnderscoresToCamelCase(input, /*cap first letter=*/true);
+}
+
+std::string ScreamingSnakeToUpperCamelCase(absl::string_view input) {
+  std::string result;
+  bool cap_next_letter = true;
+  for (const char c : input) {
+    if (absl::ascii_isalpha(c)) {
+      if (cap_next_letter) {
+        result += absl::ascii_toupper(c);
+      } else {
+        result += absl::ascii_tolower(c);
+      }
+      cap_next_letter = false;
+    } else if (absl::ascii_isdigit(c)) {
+      result += c;
+      cap_next_letter = true;
+    } else {
+      cap_next_letter = true;
+    }
+  }
+  return result;
 }
 
 }  // namespace rust
