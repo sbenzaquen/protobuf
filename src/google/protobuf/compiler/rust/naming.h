@@ -35,12 +35,42 @@ std::string ThunkName(Context& ctx, const Descriptor& msg,
 
 std::string PrimitiveRsTypeName(const FieldDescriptor& field);
 
+std::string EnumRsName(const EnumDescriptor& desc);
+
+std::string OneofViewEnumRsName(const OneofDescriptor& oneof);
+std::string OneofMutEnumRsName(const OneofDescriptor& oneof);
+std::string OneofCaseEnumRsName(const OneofDescriptor& oneof);
+std::string OneofCaseRsName(const FieldDescriptor& oneof_field);
+
 std::string FieldInfoComment(Context& ctx, const FieldDescriptor& field);
 
+// Constructs a string of the Rust modules which will contain the message.
+//
+// Example: Given a message 'NestedMessage' which is defined in package 'x.y'
+// which is inside 'ParentMessage', the message will be placed in the
+// x::y::ParentMessage_ Rust module, so this function will return the string
+// "x::y::ParentMessage_::".
+//
+// If the message has no package and no containing messages then this returns
+// empty string.
 std::string RustModule(Context& ctx, const Descriptor& msg);
+std::string RustModule(Context& ctx, const EnumDescriptor& enum_);
 std::string RustInternalModuleName(Context& ctx, const FileDescriptor& file);
 
 std::string GetCrateRelativeQualifiedPath(Context& ctx, const Descriptor& msg);
+std::string GetCrateRelativeQualifiedPath(Context& ctx,
+                                          const EnumDescriptor& enum_);
+
+// TODO: Unify these with other case-conversion functions.
+
+// Converts an UpperCamel or lowerCamel string to a snake_case string.
+std::string CamelToSnakeCase(absl::string_view input);
+
+// Converts a snake_case string to an UpperCamelCase string.
+std::string SnakeToUpperCamelCase(absl::string_view input);
+
+// Converts a SCREAMING_SNAKE_CASE string to an UpperCamelCase string.
+std::string ScreamingSnakeToUpperCamelCase(absl::string_view input);
 
 }  // namespace rust
 }  // namespace compiler
