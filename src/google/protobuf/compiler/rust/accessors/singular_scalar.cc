@@ -5,6 +5,10 @@
 // license that can be found in the LICENSE file or at
 // https://developers.google.com/open-source/licenses/bsd
 
+#include <string>
+#include <utility>
+
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/compiler/cpp/helpers.h"
 #include "google/protobuf/compiler/rust/accessors/accessor_generator.h"
@@ -23,9 +27,9 @@ void SingularScalar::InMsgImpl(Context& ctx,
   ctx.Emit(
       {
           {"field", field.name()},
-          {"Scalar", PrimitiveRsTypeName(field)},
+          {"Scalar", RsTypePath(ctx, field)},
           {"hazzer_thunk", ThunkName(ctx, field, "has")},
-          {"default_value", DefaultValue(field)},
+          {"default_value", DefaultValue(ctx, field)},
           {"getter",
            [&] {
              ctx.Emit({}, R"rs(
@@ -117,7 +121,9 @@ void SingularScalar::InMsgImpl(Context& ctx,
 
 void SingularScalar::InExternC(Context& ctx,
                                const FieldDescriptor& field) const {
-  ctx.Emit({{"Scalar", PrimitiveRsTypeName(field)},
+  // Rust protobuf enums are `#[repr(transparent)]` over i32 and can be used
+  // directly when calling an `extern fn` that takes `int32_t`.
+  ctx.Emit({{"Scalar", RsTypePath(ctx, field)},
             {"hazzer_thunk", ThunkName(ctx, field, "has")},
             {"getter_thunk", ThunkName(ctx, field, "get")},
             {"setter_thunk", ThunkName(ctx, field, "set")},
@@ -141,7 +147,19 @@ void SingularScalar::InExternC(Context& ctx,
 
 void SingularScalar::InThunkCc(Context& ctx,
                                const FieldDescriptor& field) const {
+  std::string get_cast, set_cast;
+  auto enum_ = field.enum_type();
+  if (enum_ != nullptr) {
+    // This passes enums as `int` over FFI. This is fine since the C++
+    // proto runtime guarantees int = int32_t.
+    get_cast = "static_cast<int>";
+    set_cast =
+        absl::StrCat("static_cast<", cpp::QualifiedClassName(enum_), ">");
+  }
+
   ctx.Emit({{"field", cpp::FieldName(&field)},
+            {"get_cast", std::move(get_cast)},
+            {"set_cast", std::move(set_cast)},
             {"Scalar", cpp::PrimitiveTypeName(field.cpp_type())},
             {"QualifiedMsg", cpp::QualifiedClassName(field.containing_type())},
             {"hazzer_thunk", ThunkName(ctx, field, "has")},
@@ -161,9 +179,11 @@ void SingularScalar::InThunkCc(Context& ctx,
              }}},
            R"cc(
              $with_presence_fields_thunks$;
-             $Scalar$ $getter_thunk$($QualifiedMsg$* msg) { return msg->$field$(); }
+             $Scalar$ $getter_thunk$($QualifiedMsg$* msg) {
+               return $get_cast$(msg->$field$());
+             }
              void $setter_thunk$($QualifiedMsg$* msg, $Scalar$ val) {
-               msg->set_$field$(val);
+               msg->set_$field$($set_cast$(val));
              }
            )cc");
 }

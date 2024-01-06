@@ -63,6 +63,12 @@ std::unique_ptr<AccessorGenerator> AccessorGeneratorFor(
         return std::make_unique<RepeatedScalar>();
       }
       return std::make_unique<SingularScalar>();
+    case FieldDescriptor::TYPE_ENUM:
+      if (field.is_repeated()) {
+        return std::make_unique<UnsupportedField>(
+            "repeated enum not supported");
+      }
+      return std::make_unique<SingularScalar>();
     case FieldDescriptor::TYPE_BYTES:
     case FieldDescriptor::TYPE_STRING:
       if (field.is_repeated()) {
@@ -80,9 +86,6 @@ std::unique_ptr<AccessorGenerator> AccessorGeneratorFor(
             " (defined in a separate Rust crate) are not supported");
       }
       return std::make_unique<SingularMessage>();
-
-    case FieldDescriptor::TYPE_ENUM:
-      return std::make_unique<UnsupportedField>("enum not supported");
 
     case FieldDescriptor::TYPE_GROUP:
       return std::make_unique<UnsupportedField>("group not supported");

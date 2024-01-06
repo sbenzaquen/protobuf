@@ -15,6 +15,8 @@
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "google/protobuf/compiler/rust/context.h"
+#include "google/protobuf/compiler/rust/naming.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/io/strtod.h"
 
@@ -23,7 +25,7 @@ namespace protobuf {
 namespace compiler {
 namespace rust {
 
-std::string DefaultValue(const FieldDescriptor& field) {
+std::string DefaultValue(Context& ctx, const FieldDescriptor& field) {
   switch (field.type()) {
     case FieldDescriptor::TYPE_DOUBLE:
       if (std::isfinite(field.default_value_double())) {
@@ -74,9 +76,13 @@ std::string DefaultValue(const FieldDescriptor& field) {
     case FieldDescriptor::TYPE_BYTES:
       return absl::StrFormat("b\"%s\"",
                              absl::CHexEscape(field.default_value_string()));
+    case FieldDescriptor::TYPE_ENUM:
+      // The `Default` impl cannot be used even if this is the default for the
+      // enum type, since it needs to work in `const`.
+      return absl::StrCat(RsTypePath(ctx, field),
+                          "::", EnumValueRsName(*field.default_value_enum()));
     case FieldDescriptor::TYPE_GROUP:
     case FieldDescriptor::TYPE_MESSAGE:
-    case FieldDescriptor::TYPE_ENUM:
       ABSL_LOG(FATAL) << "Unsupported field type: " << field.type_name();
   }
   ABSL_LOG(FATAL) << "unreachable";
